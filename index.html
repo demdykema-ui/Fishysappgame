@@ -175,54 +175,53 @@
     }
 
     function playMusicNote(freq, duration, type, volume, startTime) {
-      if (!audioCtx || freq === 0) return;
+      if (!audioCtx || freq === 0) return null;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = type;
       osc.frequency.value = freq;
       gain.gain.setValueAtTime(volume, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration * 0.95);
+      gain.gain.setValueAtTime(volume, startTime + duration * 0.7);
+      gain.gain.linearRampToValueAtTime(0, startTime + duration);
       osc.connect(gain);
       gain.connect(audioCtx.destination);
       osc.start(startTime);
-      osc.stop(startTime + duration);
-      musicNodes.push(osc);
+      osc.stop(startTime + duration + 0.01);
+      return osc;
     }
 
     function scheduleMusic() {
-      if (!audioCtx || !game.musicOn) return;
+      if (!audioCtx || !game.musicOn) return 4;
 
       const bpm = 140;
       const sixteenth = 60 / bpm / 4;
-      let startTime = audioCtx.currentTime + 0.05;
+      const startTime = audioCtx.currentTime + 0.05;
 
-      // Schedule melody
+      // Schedule melody — louder and clear
       let melodyTime = startTime;
       for (const [note, oct, dur] of melody) {
         const freq = noteToFreq(note, oct);
         if (freq > 0) {
-          playMusicNote(freq, sixteenth * dur * 0.85, 'square', 0.018, melodyTime);
+          playMusicNote(freq, sixteenth * dur * 0.9, 'square', 0.07, melodyTime);
         }
         melodyTime += sixteenth * dur;
       }
 
-      // Schedule bass
+      // Schedule bass — solid and warm
       let bassTime = startTime;
       for (const [note, oct, dur] of bassLine) {
         const freq = noteToFreq(note, oct);
         if (freq > 0) {
-          playMusicNote(freq, sixteenth * dur * 0.7, 'triangle', 0.025, bassTime);
+          playMusicNote(freq, sixteenth * dur * 0.8, 'triangle', 0.09, bassTime);
         }
         bassTime += sixteenth * dur;
       }
 
-      // Schedule percussion (kick + hihat pattern)
-      let percTime = startTime;
-      const totalBeats = Math.floor(melodyTime - startTime);
-      for (let i = 0; i < 64; i++) {
-        const t = percTime + i * sixteenth;
-        if (t >= melodyTime) break;
-        // Kick on beats 1 and 3
+      // Schedule percussion across full melody length
+      const totalSixteenths = Math.ceil((melodyTime - startTime) / sixteenth);
+      for (let i = 0; i < totalSixteenths; i++) {
+        const t = startTime + i * sixteenth;
+        // Kick on beats 1 and 3 of each bar
         if (i % 8 === 0 || i % 8 === 4) {
           playPercussion(t, 'kick');
         }
@@ -232,9 +231,7 @@
         }
       }
 
-      // Loop duration
-      const loopDuration = melodyTime - startTime;
-      return loopDuration;
+      return melodyTime - startTime;
     }
 
     function playPercussion(time, type) {
@@ -246,39 +243,33 @@
         osc.type = 'sine';
         osc.frequency.setValueAtTime(150, time);
         osc.frequency.exponentialRampToValueAtTime(30, time + 0.08);
-        gain.gain.setValueAtTime(0.04, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+        gain.gain.setValueAtTime(0.12, time);
+        gain.gain.linearRampToValueAtTime(0, time + 0.1);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
         osc.start(time);
-        osc.stop(time + 0.1);
+        osc.stop(time + 0.12);
       } else {
-        // Hihat using high-frequency noise approximation
         osc.type = 'square';
         osc.frequency.value = 6000 + Math.random() * 2000;
-        gain.gain.setValueAtTime(0.008, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
+        gain.gain.setValueAtTime(0.03, time);
+        gain.gain.linearRampToValueAtTime(0, time + 0.03);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
         osc.start(time);
-        osc.stop(time + 0.04);
+        osc.stop(time + 0.05);
       }
-      musicNodes.push(osc);
     }
 
     function startMusic() {
       if (musicPlaying || !game.musicOn) return;
       musicPlaying = true;
-      musicNodes = [];
 
       function loop() {
         if (!musicPlaying || !game.musicOn) return;
-        // Clean up old nodes
-        musicNodes = musicNodes.filter(n => {
-          try { return n.context.currentTime < n.stop; } catch(e) { return false; }
-        });
         const dur = scheduleMusic();
-        musicInterval = setTimeout(loop, (dur || 4) * 1000 - 100);
+        // Schedule next loop slightly before current one ends for seamless playback
+        musicInterval = setTimeout(loop, dur * 1000 - 200);
       }
       loop();
     }
