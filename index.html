@@ -2,8 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Soccer Flappy Clone</title>
+  <meta name="description" content="Kick the soccer ball through the goal posts! A fun, soccer-themed Flappy Bird clone you can play in your browser." />
+  <meta name="theme-color" content="#111827" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%9A%BD</text></svg>" />
+  <link rel="manifest" href="manifest.json" />
+  <meta property="og:title" content="Soccer Flappy Clone" />
+  <meta property="og:description" content="Kick the soccer ball through the goal posts! A soccer-themed Flappy Bird clone." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://demdykema-ui.github.io/Fishysappgame/" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Soccer Flappy Clone" />
+  <meta name="twitter:description" content="Kick the soccer ball through the goal posts!" />
   <style>
     * { box-sizing: border-box; }
     body {
@@ -15,6 +26,7 @@
       background: #111827;
       font-family: Arial, sans-serif;
       color: white;
+      overflow: hidden;
     }
     .wrap {
       text-align: center;
@@ -24,8 +36,10 @@
       border: 4px solid #0f172a;
       border-radius: 16px;
       box-shadow: 0 12px 30px rgba(0,0,0,0.35);
-      max-width: 100%;
-      height: auto;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
     .hint {
       margin-top: 12px;
@@ -37,7 +51,7 @@
 <body>
   <div class="wrap">
     <canvas id="game" width="400" height="600"></canvas>
-    <div class="hint">Tap, click, or press space to kick the ball upward</div>
+    <div class="hint">Tap, click, or press Space to kick the ball upward</div>
   </div>
   <script>
     const canvas = document.getElementById('game');
@@ -50,6 +64,7 @@
       flapStrength: -7.5,
       started: false,
       over: false,
+      paused: false,
       score: 0,
       bestScore: 0,
       pipeGap: 170,
@@ -59,8 +74,15 @@
       spawnInterval: 95,
       flashTimer: 0,
       difficultyLevel: 1,
-      groundHeight: 30
+      groundHeight: 30,
+      levelUpTimer: 0
     };
+
+    // Load best score from localStorage
+    try {
+      const saved = localStorage.getItem('soccerFlappy_bestScore');
+      if (saved) game.bestScore = parseInt(saved, 10) || 0;
+    } catch (e) {}
 
     const bird = {
       x: 100,
@@ -79,6 +101,24 @@
     ];
 
     let audioCtx = null;
+    let lastTime = 0;
+
+    // ---- Canvas scaling for mobile ----
+    function resizeCanvas() {
+      const maxW = window.innerWidth - 16;
+      const maxH = window.innerHeight - 60;
+      const aspect = 400 / 600;
+      let w = maxW;
+      let h = w / aspect;
+      if (h > maxH) {
+        h = maxH;
+        w = h * aspect;
+      }
+      canvas.style.width = Math.floor(w) + 'px';
+      canvas.style.height = Math.floor(h) + 'px';
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     function resetGame() {
       bird.x = 100;
@@ -87,12 +127,14 @@
       bird.rotation = 0;
       game.started = false;
       game.over = false;
+      game.paused = false;
       game.score = 0;
       game.pipeGap = 170;
       game.pipeSpeed = 2.6;
       game.spawnInterval = 95;
       game.spawnTimer = 0;
       game.flashTimer = 0;
+      game.levelUpTimer = 0;
       game.difficultyLevel = 1;
       pipes.length = 0;
     }
@@ -120,8 +162,14 @@
       osc.stop(audioCtx.currentTime + duration);
     }
 
+    function togglePause() {
+      if (!game.started || game.over) return;
+      game.paused = !game.paused;
+    }
+
     function flap() {
       initAudio();
+      if (game.paused) return;
       if (game.over) {
         resetGame();
         return;
@@ -145,6 +193,12 @@
       });
     }
 
+    function saveBestScore() {
+      try {
+        localStorage.setItem('soccerFlappy_bestScore', game.bestScore);
+      } catch (e) {}
+    }
+
     function increaseDifficulty() {
       const level = 1 + Math.floor(game.score / 5);
       if (level !== game.difficultyLevel) {
@@ -152,6 +206,7 @@
         game.pipeSpeed = Math.min(4.8, 2.6 + (level - 1) * 0.25);
         game.pipeGap = Math.max(130, 170 - (level - 1) * 6);
         game.spawnInterval = Math.max(72, 95 - (level - 1) * 3);
+        game.levelUpTimer = 60;
         playTone(760, 0.08, 'triangle', 0.03);
       }
     }
@@ -164,25 +219,26 @@
       return (dx * dx + dy * dy) < radius * radius;
     }
 
-    function update() {
-      // Animate clouds
+    function update(dt) {
+      // Animate clouds always
       clouds.forEach((cloud) => {
-        cloud.x -= cloud.speed;
+        cloud.x -= cloud.speed * dt;
         if (cloud.x + cloud.w < 0) {
           cloud.x = game.width + 20;
         }
       });
 
-      if (game.flashTimer > 0) game.flashTimer -= 1;
-      if (!game.started || game.over) return;
+      if (game.flashTimer > 0) game.flashTimer -= dt;
+      if (game.levelUpTimer > 0) game.levelUpTimer -= dt;
+      if (!game.started || game.over || game.paused) return;
 
       // Bird physics
-      bird.velocityY += game.gravity;
-      bird.y += bird.velocityY;
+      bird.velocityY += game.gravity * dt;
+      bird.y += bird.velocityY * dt;
       bird.rotation = Math.max(-0.5, Math.min(1, bird.velocityY * 0.08));
 
       // Spawn pipes
-      game.spawnTimer += 1;
+      game.spawnTimer += dt;
       if (game.spawnTimer >= game.spawnInterval) {
         createPipe();
         game.spawnTimer = 0;
@@ -191,12 +247,13 @@
       // Update pipes
       for (let i = pipes.length - 1; i >= 0; i--) {
         const pipe = pipes[i];
-        pipe.x -= game.pipeSpeed;
+        pipe.x -= game.pipeSpeed * dt;
 
         if (!pipe.passed && pipe.x + pipe.width < bird.x) {
           pipe.passed = true;
           game.score += 1;
           game.bestScore = Math.max(game.bestScore, game.score);
+          saveBestScore();
           game.flashTimer = 5;
           playTone(820, 0.05, 'triangle', 0.028);
           increaseDifficulty();
@@ -239,21 +296,18 @@
     // ---- Drawing functions ----
 
     function drawBackground() {
-      // Sky gradient
       const skyGrad = ctx.createLinearGradient(0, 0, 0, game.height * 0.7);
       skyGrad.addColorStop(0, '#7dd3fc');
       skyGrad.addColorStop(1, '#bae6fd');
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, game.width, game.height * 0.7);
 
-      // Ground gradient
       const groundGrad = ctx.createLinearGradient(0, game.height * 0.7, 0, game.height);
       groundGrad.addColorStop(0, '#86efac');
       groundGrad.addColorStop(1, '#4ade80');
       ctx.fillStyle = groundGrad;
       ctx.fillRect(0, game.height * 0.7, game.width, game.height * 0.3);
 
-      // Ground strip
       ctx.fillStyle = '#65a30d';
       ctx.fillRect(0, game.height - game.groundHeight, game.width, game.groundHeight);
       ctx.fillStyle = '#4d7c0f';
@@ -276,7 +330,6 @@
     }
 
     function drawPipe(pipe) {
-      // Top pipe
       const pipeGrad = ctx.createLinearGradient(pipe.x, 0, pipe.x + pipe.width, 0);
       pipeGrad.addColorStop(0, '#ffffff');
       pipeGrad.addColorStop(0.2, '#e2e8f0');
@@ -286,7 +339,6 @@
 
       // Top post
       ctx.fillRect(pipe.x, 0, pipe.width, pipe.topHeight);
-      // Top cap (goal-post style)
       ctx.fillStyle = '#f1f5f9';
       ctx.fillRect(pipe.x - 6, pipe.topHeight - 20, pipe.width + 12, 20);
       ctx.strokeStyle = '#64748b';
@@ -312,7 +364,6 @@
       // Bottom pipe
       ctx.fillStyle = pipeGrad;
       ctx.fillRect(pipe.x, pipe.bottomY, pipe.width, game.height - game.groundHeight - pipe.bottomY);
-      // Bottom cap
       ctx.fillStyle = '#f1f5f9';
       ctx.fillRect(pipe.x - 6, pipe.bottomY, pipe.width + 12, 20);
       ctx.strokeStyle = '#64748b';
@@ -341,7 +392,6 @@
       ctx.translate(bird.x, bird.y);
       ctx.rotate(bird.rotation);
 
-      // Soccer ball - white base
       ctx.beginPath();
       ctx.arc(0, 0, bird.radius, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff';
@@ -350,10 +400,8 @@
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Pentagon pattern (soccer ball look)
       const r = bird.radius * 0.45;
       ctx.fillStyle = '#1f2937';
-      // Center pentagon
       ctx.beginPath();
       for (let i = 0; i < 5; i++) {
         const angle = (Math.PI * 2 / 5) * i - Math.PI / 2;
@@ -365,7 +413,6 @@
       ctx.closePath();
       ctx.fill();
 
-      // Outer pentagons hints
       for (let i = 0; i < 5; i++) {
         const angle = (Math.PI * 2 / 5) * i - Math.PI / 2;
         const cx2 = Math.cos(angle) * bird.radius * 0.78;
@@ -382,7 +429,7 @@
     function drawScore() {
       // Score flash effect
       if (game.flashTimer > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${game.flashTimer * 0.06})`;
+        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(game.flashTimer, 5) * 0.06})`;
         ctx.fillRect(0, 0, game.width, game.height);
       }
 
@@ -394,6 +441,63 @@
       ctx.textAlign = 'center';
       ctx.strokeText(game.score, game.width / 2, 60);
       ctx.fillText(game.score, game.width / 2, 60);
+
+      // Level indicator
+      if (game.difficultyLevel > 1) {
+        ctx.font = 'bold 16px Arial';
+        ctx.fillStyle = '#fbbf24';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 3;
+        ctx.strokeText('Level ' + game.difficultyLevel, game.width / 2, 85);
+        ctx.fillText('Level ' + game.difficultyLevel, game.width / 2, 85);
+      }
+
+      // Level up flash
+      if (game.levelUpTimer > 0) {
+        const alpha = Math.min(game.levelUpTimer / 30, 1);
+        const scale = 1 + (1 - alpha) * 0.3;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(game.width / 2, 140);
+        ctx.scale(scale, scale);
+        ctx.font = 'bold 28px Arial';
+        ctx.fillStyle = '#fbbf24';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 3;
+        ctx.strokeText('LEVEL UP!', 0, 0);
+        ctx.fillText('LEVEL UP!', 0, 0);
+        ctx.restore();
+      }
+
+      ctx.restore();
+    }
+
+    function drawPauseButton() {
+      if (!game.started || game.over) return;
+      // Pause icon in top-right
+      const bx = game.width - 40;
+      const by = 15;
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(bx, by, 8, 22);
+      ctx.fillRect(bx + 14, by, 8, 22);
+      ctx.restore();
+    }
+
+    function drawPauseOverlay() {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(0, 0, game.width, game.height);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 40px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('PAUSED', game.width / 2, game.height / 2 - 20);
+
+      ctx.font = '20px Arial';
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText('Tap or press P to resume', game.width / 2, game.height / 2 + 25);
       ctx.restore();
     }
 
@@ -411,24 +515,29 @@
       ctx.fillStyle = '#e2e8f0';
       ctx.fillText('Tap or press Space to play', game.width / 2, 260);
 
+      if (game.bestScore > 0) {
+        ctx.font = '18px Arial';
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText('Best: ' + game.bestScore, game.width / 2, 295);
+      }
+
       // Bouncing ball animation
       const bounce = Math.sin(Date.now() * 0.004) * 15;
       ctx.beginPath();
-      ctx.arc(game.width / 2, 340 + bounce, 24, 0, Math.PI * 2);
+      ctx.arc(game.width / 2, 360 + bounce, 24, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
       ctx.strokeStyle = '#374151';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Mini pentagon on bouncing ball
       ctx.fillStyle = '#1f2937';
       ctx.beginPath();
       const sr = 10;
       for (let i = 0; i < 5; i++) {
         const angle = (Math.PI * 2 / 5) * i - Math.PI / 2;
         const px = game.width / 2 + Math.cos(angle) * sr;
-        const py = 340 + bounce + Math.sin(angle) * sr;
+        const py = 360 + bounce + Math.sin(angle) * sr;
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
@@ -450,11 +559,11 @@
 
       ctx.fillStyle = '#ffffff';
       ctx.font = '24px Arial';
-      ctx.fillText(`Score: ${game.score}`, game.width / 2, 280);
+      ctx.fillText('Score: ' + game.score, game.width / 2, 280);
 
       ctx.fillStyle = '#fbbf24';
       ctx.font = '20px Arial';
-      ctx.fillText(`Best: ${game.bestScore}`, game.width / 2, 320);
+      ctx.fillText('Best: ' + game.bestScore, game.width / 2, 320);
 
       ctx.fillStyle = '#e2e8f0';
       ctx.font = '18px Arial';
@@ -468,13 +577,12 @@
 
       drawBackground();
       drawClouds();
-
       pipes.forEach(drawPipe);
-
       drawBird();
 
       if (game.started) {
         drawScore();
+        drawPauseButton();
       }
 
       if (!game.started && !game.over) {
@@ -484,18 +592,48 @@
       if (game.over) {
         drawGameOver();
       }
+
+      if (game.paused) {
+        drawPauseOverlay();
+      }
     }
 
-    function gameLoop() {
-      update();
+    function gameLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      let dt = (timestamp - lastTime) / 16.667; // normalize to 60fps
+      lastTime = timestamp;
+
+      // Cap dt to prevent huge jumps after tab switch
+      if (dt > 3) dt = 0;
+
+      update(dt);
       draw();
       requestAnimationFrame(gameLoop);
     }
 
     // ---- Input handlers ----
 
+    function isPauseButtonHit(x, y) {
+      // Check if tap is in the pause button area (top-right)
+      return x >= game.width - 50 && x <= game.width - 10 && y >= 10 && y <= 45;
+    }
+
     canvas.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = game.width / rect.width;
+      const scaleY = game.height / rect.height;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+
+      if (game.started && !game.over && isPauseButtonHit(x, y)) {
+        togglePause();
+        return;
+      }
+      if (game.paused) {
+        togglePause();
+        return;
+      }
       flap();
     });
 
@@ -504,10 +642,31 @@
         e.preventDefault();
         flap();
       }
+      if (e.code === 'KeyP' || e.code === 'Escape') {
+        e.preventDefault();
+        togglePause();
+      }
     });
 
+    // Tab visibility: reset lastTime to avoid dt spike
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        // Auto-pause when tab is hidden
+        if (game.started && !game.over && !game.paused) {
+          game.paused = true;
+        }
+      }
+      // Reset lastTime so dt doesn't spike when returning
+      lastTime = 0;
+    });
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+
     // Start the game loop
-    gameLoop();
+    requestAnimationFrame(gameLoop);
   </script>
 </body>
 </html>
